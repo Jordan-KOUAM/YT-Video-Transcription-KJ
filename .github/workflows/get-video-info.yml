@@ -53,3 +53,8 @@ jobs:
         git add "${{ env.FILENAME }}"
         git commit -m "Add video info: ${{ env.FILENAME }}"
         git push https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git HEAD:main
+
+    - name: Save output
+      run: |
+        echo "$TRANSCRIPTION" > outputs/{{ inputs.video_url | slugify }}.txt
+
