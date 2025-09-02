@@ -1,133 +1,209 @@
-import os, re, json, sys, base64, tempfile, shutil, datetime
-from pathlib import Path
+import sys
+import json
+import re
+import urllib.request
 from yt_dlp import YoutubeDL
 
-URL = sys.argv[1]
-OUTFILE = sys.argv[2] if len(sys.argv) > 2 else "outputs/out.json"
+"""
+Usage:
+  python main.py <video_url> <output_json> [--cookies path/to/cookies.txt]
 
-# --- helpers ---
-def slugify_url(u: str) -> str:
-    return re.sub(r'[^a-zA-Z0-9]+', '_', u).strip('_')
+Sortie JSON (extrait):
+{
+  "video_url": "...",
+  "title": "...",
+  "description": "...",
+  "thumbnail": "...",
+  "metadata": { ... },
+  "transcript": {
+    "lang": "fr",
+    "raw_srt": "..." | null,
+    "clean_text": "..."
+  }
+}
+"""
 
-def read_file_text(p: Path) -> str:
-    try:
-        return p.read_text(encoding='utf-8', errors='ignore')
-    except Exception:
-        return ""
+def pick_best_thumbnail(info):
+    thumbs = info.get("thumbnails") or []
+    if not thumbs and "thumbnail" in info:
+        return info["thumbnail"]
+    # prend la plus grande
+    best = None
+    best_area = -1
+    for t in thumbs:
+        w = t.get("width") or 0
+        h = t.get("height") or 0
+        a = w * h
+        if a > best_area and t.get("url"):
+            best = t["url"]
+            best_area = a
+    return best
 
-def srt_to_clean_text(srt: str) -> str:
-    # retire numéros + timecodes + balises
-    lines = []
-    for line in srt.splitlines():
-        if re.match(r'^\s*\d+\s*$', line):  # index
+def fetch_url(url: str) -> str:
+    with urllib.request.urlopen(url) as r:
+        return r.read().decode("utf-8", errors="replace")
+
+def vtt_to_srt(vtt_text: str) -> str:
+    # très simple conversion VTT -> SRT
+    lines = vtt_text.splitlines()
+    out = []
+    idx = 1
+    buf = []
+    for line in lines:
+        if line.strip().startswith("WEBVTT"):
             continue
-        if re.search(r'\d{2}:\d{2}:\d{2},\d{3}\s*-->\s*\d{2}:\d{2}:\d{2},\d{3}', line):
+        # convertir --> en --> (identique) mais VTT a . au lieu de , pour ms
+        if "-->" in line:
+            # "00:00:01.000 --> 00:00:02.000" -> "00:00:01,000 --> 00:00:02,000"
+            line = re.sub(r"(\d{2}:\d{2}:\d{2})\.(\d{3})", r"\1,\2", line)
+            if buf:
+                out.append(str(idx))
+                out.extend(buf)
+                buf = []
+                idx += 1
+        if line.strip() == "":
             continue
-        line = re.sub(r'<[^>]+>', '', line)     # tags html
-        line = re.sub(r'\s+', ' ', line).strip()
+        buf.append(line)
+    if buf:
+        out.append(str(idx))
+        out.extend(buf)
+    return "\n".join(out)
+
+def srt_clean_text(srt_text: str) -> str:
+    # enlève index, timestamps, balises, numéros…
+    text_lines = []
+    for line in srt_text.splitlines():
+        if re.match(r"^\d+\s*$", line.strip()):
+            continue
+        if "-->" in line:
+            continue
+        # enlever balises HTML simples <i> <b> etc.
+        line = re.sub(r"<[^>]+>", "", line)
+        # enlever notes ({\an8}) style SSA/ASS
+        line = re.sub(r"{\\.*?}", "", line)
+        line = line.strip()
         if line:
-            lines.append(line)
-    # fusionne proprement
-    text = ' '.join(lines)
-    # supprime répétitions banales
-    text = re.sub(r'(.\s*)\1{2,}', r'\1', text)
+            text_lines.append(line)
+    # joindre et normaliser espaces
+    text = " ".join(text_lines)
+    text = re.sub(r"\s{2,}", " ", text).strip()
     return text
 
-def best_thumbnail(info: dict) -> str:
-    if info.get("thumbnail"):
-        return info["thumbnail"]
-    vid = info.get("id")
-    if vid:
-        # maxres → fallback hq
-        return f"https://i.ytimg.com/vi/{vid}/maxresdefault.jpg"
-    return None
+def choose_lang_track(tracks: dict, preferred=("fr","fr-FR","fr-FR.0","en","en-US","en-GB")):
+    if not tracks:
+        return None, None
+    # tracks: {"fr":[{url:..., ext: vtt},{...}], "en":[...]}
+    for lang in preferred:
+        if lang in tracks and tracks[lang]:
+            # préférer vtt puis srt
+            # sinon première dispo
+            cand = None
+            for it in tracks[lang]:
+                if it.get("ext") in ("vtt","webvtt","srv3","srt"):
+                    cand = it
+                    break
+            if not cand:
+                cand = tracks[lang][0]
+            return lang, cand
+    # fallback: première langue trouvée
+    first_lang = next(iter(tracks.keys()))
+    return first_lang, tracks[first_lang][0] if tracks[first_lang] else (None, None)
 
-# --- cookies optionnels depuis variable d'environnement (secrets) ---
-cookies_path = None
-if os.getenv("COOKIES_B64"):
-    tmpdir = tempfile.mkdtemp()
-    cookies_path = os.path.join(tmpdir, "cookies.txt")
-    with open(cookies_path, "wb") as f:
-        f.write(base64.b64decode(os.environ["COOKIES_B64"]))
+def download_caption_and_make_text(item) -> (str, str):
+    """
+    Télécharge la piste via URL, retourne (raw_srt, clean_text).
+    Supporte vtt/srt/srv3 minimalement (srv3 traité comme vtt texte brut ici).
+    """
+    if not item or "url" not in item:
+        return None, ""
+    cap = fetch_url(item["url"])
+    ext = (item.get("ext") or "").lower()
+    if ext in ("srt",):
+        raw = cap
+    elif ext in ("vtt","webvtt","srv3","json3"):
+        # convertir vtt→srt best effort
+        raw = vtt_to_srt(cap)
+    else:
+        # inconnu, on garde brut
+        raw = cap
+    clean = srt_clean_text(raw)
+    return raw, clean
 
-# --- répertoire de travail pour sous-titres ---
-workdir = Path(tempfile.mkdtemp())
-subs_dir = workdir / "subs"
-subs_dir.mkdir(parents=True, exist_ok=True)
+def main():
+    if len(sys.argv) < 3:
+        print("Usage: python main.py <video_url> <output_json> [--cookies path/to/cookies.txt]")
+        sys.exit(1)
+    url = sys.argv[1]
+    output_filename = sys.argv[2]
+    cookies = None
+    if len(sys.argv) >= 5 and sys.argv[3] == "--cookies":
+        cookies = sys.argv[4]
 
-# fichiers srt attendus
-outtmpl = str(subs_dir / "%(id)s.%(ext)s")
+    ydl_opts = {
+        "quiet": True,
+        "skip_download": True,
+        "noplaylist": True,
+        "extract_flat": False,
+        "writesubtitles": False,
+        "writeautomaticsub": False,
+        # On veut les liens des subs dans l'info (subtitles/automatic_captions)
+        "subtitleslangs": ["fr","fr-FR","en","en-US","en-GB"],
+    }
+    if cookies:
+        ydl_opts["cookiefile"] = cookies
 
-ydl_opts = {
-    "skip_download": True,
-    "quiet": True,
-    "nocheckcertificate": True,
-    "outtmpl": outtmpl,
-    # sous-titres
-    "writesubtitles": True,
-    "writeautomaticsub": True,
-    "subtitlesformat": "srt",
-    "subtitleslangs": ["fr", "fr.*,live_chat", "en", "en.*", "de", "es", "*"],
-}
+    with YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=False)
 
-if cookies_path:
-    ydl_opts["cookiefile"] = cookies_path
+    # Métadonnées utiles
+    title = info.get("title")
+    description = info.get("description") or ""
+    thumbnail = pick_best_thumbnail(info)
+    duration = info.get("duration")
+    upload_date = info.get("upload_date")
+    channel = info.get("channel")
+    channel_id = info.get("channel_id")
+    view_count = info.get("view_count")
+    like_count = info.get("like_count")
 
-# 1) Extraire les métadonnées
-with YoutubeDL(ydl_opts) as ydl:
-    info = ydl.extract_info(URL, download=False)
+    # Sous-titres (priorité aux 'subtitles', sinon 'automatic_captions')
+    lang, track = choose_lang_track(info.get("subtitles") or {})
+    if not track:
+        lang, track = choose_lang_track(info.get("automatic_captions") or {})
 
-# 2) Télécharger UNIQUEMENT les sous-titres (skip_download True)
-#    (en API, il faut quand même appeler download pour que yt-dlp écrive les .srt)
-with YoutubeDL(ydl_opts) as ydl:
-    ydl.download([URL])
+    raw_srt = None
+    clean_text = ""
+    if track:
+        try:
+            raw_srt, clean_text = download_caption_and_make_text(track)
+        except Exception as e:
+            raw_srt = None
+            clean_text = ""
 
-# 3) Chercher le .srt écrit
-video_id = info.get("id")
-raw_srt_text = ""
-clean_text = ""
-srt_lang = None
+    out = {
+        "video_url": url,
+        "title": title,
+        "description": description,
+        "thumbnail": thumbnail,
+        "metadata": {
+            "duration": duration,
+            "upload_date": upload_date,
+            "channel": channel,
+            "channel_id": channel_id,
+            "view_count": view_count,
+            "like_count": like_count,
+            "id": info.get("id"),
+            "webpage_url": info.get("webpage_url"),
+        },
+        "transcript": {
+            "lang": lang,
+            "raw_srt": raw_srt,        # colonne 1 (brute)
+            "clean_text": clean_text    # colonne 2 (propre)
+        }
+    }
 
-if video_id:
-    # trouve le premier .srt correspondant
-    srt_files = sorted(subs_dir.glob(f"{video_id}*.srt"))
-    if srt_files:
-        srt_path = srt_files[0]
-        raw_srt_text = read_file_text(srt_path)
-        clean_text = srt_to_clean_text(raw_srt_text)
-        # langue approximative dans le nom
-        m = re.search(rf"{re.escape(video_id)}\.([^.]+)\.srt$", srt_path.name)
-        if m:
-            srt_lang = m.group(1)
+    with open(output_filename, "w", encoding="utf-8") as f:
+        json.dump(out, f, ensure_ascii=False, indent=2)
 
-# 4) Construire le JSON final
-payload = {
-    "videoUrl": URL,
-    "id": info.get("id"),
-    "title": info.get("title"),
-    "description": info.get("description"),
-    "channel": info.get("channel") or info.get("uploader"),
-    "channel_id": info.get("channel_id") or info.get("uploader_id"),
-    "duration": info.get("duration"),
-    "viewCount": info.get("view_count"),
-    "uploadDate": info.get("upload_date"),
-    "thumbnailUrl": best_thumbnail(info),
-    "subtitle": {
-        "lang": srt_lang,
-        "raw_srt": raw_srt_text or None,
-        "clean_text": clean_text or None,
-        "has_subtitles": bool(raw_srt_text),
-    },
-    "dump": info,  # full dump en secours
-    "generated_at": datetime.datetime.utcnow().isoformat() + "Z",
-}
-
-# 5) Écriture du JSON de sortie
-Path(OUTFILE).parent.mkdir(parents=True, exist_ok=True)
-with open(OUTFILE, "w", encoding="utf-8") as f:
-    json.dump(payload, f, ensure_ascii=False, indent=2)
-
-# 6) Nettoyage
-if cookies_path:
-    shutil.rmtree(Path(cookies_path).parent, ignore_errors=True)
-shutil.rmtree(workdir, ignore_errors=True)
+if __name__ == "__main__":
+    main()
