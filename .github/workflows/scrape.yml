@@ -1,0 +1,48 @@
+name: Scrape YouTube Channel
+
+on:
+  workflow_dispatch:
+    inputs:
+      youtube_url:
+        description: 'YouTube Channel URL'
+        required: true
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    - name: Install yt-dlp
+      run: pip install yt-dlp
+
+    - name: Prepare filename
+      id: prep
+      run: |
+        url="${{ github.event.inputs.youtube_url }}"
+        slug=$(echo "$url" | sed 's/[^a-zA-Z0-9]/_/g')
+        timestamp=$(date +%s)
+        mkdir -p outputs
+        filename="outputs/output_${slug}_${timestamp}.json"
+        echo "filename=$filename" >> $GITHUB_ENV
+        echo "filename=$filename" >> "$GITHUB_OUTPUT"
+
+    - name: Run yt-dlp
+      run: |
+        url="${{ github.event.inputs.youtube_url }}"
+        python main.py "$url" "${{ env.filename }}"
+
+    - name: Commit output
+      env:
+        GH_TOKEN: ${{ secrets.GH_TOKEN }}
+      run: |
+        git config user.name github-actions
+        git config user.email github-actions@github.com
+        git add "${{ env.filename }}"
+        git commit -m "Add output file: ${{ env.filename }}"
+        git push https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git HEAD:main
