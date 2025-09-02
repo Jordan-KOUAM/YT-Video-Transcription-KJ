@@ -1,85 +1,33 @@
 import sys
-import json
 import os
-import tempfile
-import glob
+import json
 import re
-
 from yt_dlp import YoutubeDL
 
-def read_vtt_as_srt_and_clean(vtt_path: str):
-    """Retourne (raw_srt_like, clean_text) depuis un .vtt."""
-    if not os.path.isfile(vtt_path):
-        return "", ""
-
-    with open(vtt_path, "r", encoding="utf-8", errors="ignore") as f:
-        lines = f.read().splitlines()
-
-    raw_parts = []
-    text_parts = []
-
-    idx = 1
-    cur_text_block = []
-
-    ts_re = re.compile(r"\d{2}:\d{2}:\d{2}\.\d{3}\s+-->\s+\d{2}:\d{2}:\d{2}\.\d{3}")
-    for line in lines:
-        # ignore entêtes STYLE/NOTE etc.
-        if line.strip().upper().startswith(("WEBVTT", "STYLE", "NOTE", "REGION")):
+def clean_vtt(vtt_text: str) -> str:
+    # retire les horodatages + numéros + balises, garde seulement le texte
+    # supprime les lignes avec --> (timestamps) et les numéros de séquence
+    lines = []
+    for line in vtt_text.splitlines():
+        if '-->' in line:
             continue
-        if "-->" in line and ts_re.search(line):
-            # flush bloc précédent
-            if cur_text_block:
-                text = " ".join(cur_text_block).strip()
-                if text:
-                    text_parts.append(text)
-                cur_text_block = []
-            # démarre un nouveau bloc avec index + timestamp en SRT-like
-            raw_parts.append(str(idx))
-            raw_parts.append(line.replace(".", ","))  # SRT utilise la virgule
-            idx += 1
-        elif line.strip() == "":
-            # fin de bloc -> flush
-            if cur_text_block:
-                text = " ".join(cur_text_block).strip()
-                if text:
-                    raw_parts.append(text)
-                    text_parts.append(text)
-                raw_parts.append("")  # ligne vide entre blocs
-                cur_text_block = []
-        else:
-            # une ligne de texte
-            cur_text_block.append(line)
+        if re.fullmatch(r'\d+', line.strip()):
+            continue
+        lines.append(line)
+    text = '\n'.join(lines)
+    # enlever balises style <c> ou <i>
+    text = re.sub(r'<[^>]+>', '', text)
+    # compacter espaces
+    text = re.sub(r'\s+\n', '\n', text)
+    text = re.sub(r'\n{2,}', '\n\n', text)
+    return text.strip()
 
-    # flush final
-    if cur_text_block:
-        text = " ".join(cur_text_block).strip()
-        if text:
-            raw_parts.append(text)
-            text_parts.append(text)
-
-    raw_srt_like = "\n".join(raw_parts).strip()
-    clean_text = " ".join(text_parts).strip()
-    return raw_srt_like, clean_text
-
-
-def pick_best_vtt(tmp_dir, video_id):
-    """Essaie de trouver le meilleur .vtt pour la vidéo dans tmp_dir."""
-    # exemples générés par yt-dlp: <id>.<lang>.vtt  (ex: abc123.en.vtt / abc123.fr.vtt)
-    patterns = [
-        f"{video_id}.fr.vtt",
-        f"{video_id}.fr-FR.vtt",
-        f"{video_id}.en.vtt",
-        f"{video_id}.en-US.vtt",
-        f"{video_id}.en-GB.vtt",
-        f"{video_id}.*.vtt",
-        f"{video_id}.vtt",
-    ]
-    for pat in patterns:
-        found = glob.glob(os.path.join(tmp_dir, pat))
-        if found:
-            return found[0]
-    return None
-
+def read_text_file(path: str) -> str:
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            return f.read()
+    except Exception:
+        return ""
 
 def main():
     if len(sys.argv) < 3:
@@ -87,74 +35,84 @@ def main():
         sys.exit(1)
 
     url = sys.argv[1]
-    output_filename = sys.argv[2]
+    out_json = sys.argv[2]
+    cookies_file = os.environ.get("COOKIES_FILE", "").strip()
+    have_cookies = cookies_file and os.path.exists(cookies_file)
 
-    with tempfile.TemporaryDirectory() as tmpd:
-        ydl_opts = {
-            "skip_download": True,
-            "writesubtitles": True,
-            "writeautomaticsub": True,
-            "subtitleslangs": ["fr", "fr-FR", "en", "en-US", "en-GB"],
-            "subtitlesformat": "vtt",
-            "outtmpl": os.path.join(tmpd, "%(id)s.%(ext)s"),
-            "quiet": True,
-        }
+    # Dossier temporaire pour sous-titres
+    tmp_dir = ".tmp_subs"
+    os.makedirs(tmp_dir, exist_ok=True)
 
-        with YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=True)  # download=True pour récupérer les .vtt
+    ydl_opts = {
+        "skip_download": True,
+        "quiet": True,
+        "no_warnings": True,
+        # récupère sous-titres auto si dispos, en VTT
+        "writesubtitles": True,
+        "writeautomaticsub": True,
+        "subtitlesformat": "vtt",
+        # priorité FR puis EN, sinon tout ce qui existe
+        "subtitleslangs": ["fr", "fr.*", "en", "en.*", "live_chat"],
+        # sauver les sous-titres dans tmp_dir
+        "outtmpl": os.path.join(tmp_dir, "%(id)s.%(ext)s"),
+    }
 
-        # Compose nos champs utiles
-        video_id = info.get("id")
-        title = info.get("title")
-        description = info.get("description")
-        uploader = info.get("uploader")
-        uploader_id = info.get("uploader_id")
-        channel = info.get("channel")
-        channel_id = info.get("channel_id")
-        duration = info.get("duration")
-        upload_date = info.get("upload_date")
-        view_count = info.get("view_count")
-        like_count = info.get("like_count")
-        thumbnails = info.get("thumbnails") or []
-        # miniature “par défaut”
-        thumb = None
-        if thumbnails:
-            # on prend la dernière (souvent la plus grande)
-            thumb = thumbnails[-1].get("url") or thumbnails[0].get("url")
+    if have_cookies:
+        ydl_opts["cookiefile"] = cookies_file
 
-        # détection du meilleur .vtt
-        vtt_path = pick_best_vtt(tmpd, video_id) if video_id else None
-        raw_srt, clean_text = ("", "")
-        if vtt_path:
-            raw_srt, clean_text = read_vtt_as_srt_and_clean(vtt_path)
+    with YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(url, download=True)  # download=True pour que les .vtt soient écrits
 
-        result = {
-            "video_url": url,
-            "video_id": video_id,
-            "title": title,
-            "description": description,
-            "thumbnail_url": thumb,
-            "uploader": uploader,
-            "uploader_id": uploader_id,
-            "channel": channel,
-            "channel_id": channel_id,
-            "duration": duration,
-            "upload_date": upload_date,
-            "view_count": view_count,
-            "like_count": like_count,
-            # transcript
-            "transcript_raw_srt": raw_srt or None,
-            "transcript_clean_text": clean_text or None,
-            # métadonnées brutes (utile si tu veux tout)
-            "_meta": {
-                "original_info": info,
-            },
-        }
+    # métadonnées utiles
+    data = {
+        "video_url": info.get("webpage_url") or url,
+        "id": info.get("id"),
+        "title": info.get("title"),
+        "description": info.get("description"),
+        "thumbnail": info.get("thumbnail") or info.get("thumbnails", [{}])[-1].get("url") if info.get("thumbnails") else None,
+        "channel": info.get("channel"),
+        "channel_id": info.get("channel_id"),
+        "channel_url": info.get("channel_url"),
+        "duration": info.get("duration"),
+        "upload_date": info.get("upload_date"),
+        "view_count": info.get("view_count"),
+        "like_count": info.get("like_count"),
+        "categories": info.get("categories"),
+        "tags": info.get("tags"),
+    }
 
-        os.makedirs(os.path.dirname(output_filename), exist_ok=True)
-        with open(output_filename, "w", encoding="utf-8") as f:
-            json.dump(result, f, ensure_ascii=False, indent=2)
+    # Essayer de trouver un fichier .vtt dans tmp_dir (FR en priorité, puis EN, puis n'importe)
+    vtt_raw = ""
+    chosen_path = ""
+    candidates_order = []
 
+    vid = data["id"] or "video"
+    # candidats typiques écrits par yt-dlp
+    for lang in ["fr", "fr-FR", "fr-.*", "en", "en-US", "en-.*"]:
+        candidates_order.append(os.path.join(tmp_dir, f"{vid}.{lang}.vtt"))
+    # fallback: n’importe quel .vtt pour cette vidéo
+    for fname in os.listdir(tmp_dir):
+        if fname.startswith(vid) and fname.endswith(".vtt"):
+            candidates_order.append(os.path.join(tmp_dir, fname))
+
+    for p in candidates_order:
+        if os.path.exists(p):
+            chosen_path = p
+            break
+
+    if chosen_path:
+        vtt_raw = read_text_file(chosen_path)
+
+    # Deux colonnes: brut (VTT) + nettoyé
+    data["transcript_raw_srt"] = vtt_raw or None
+    data["transcript_clean_text"] = clean_vtt(vtt_raw) if vtt_raw else None
+
+    # Sauver
+    os.makedirs(os.path.dirname(out_json), exist_ok=True)
+    with open(out_json, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+    print(f"Wrote JSON: {out_json}")
 
 if __name__ == "__main__":
     main()
