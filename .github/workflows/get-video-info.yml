@@ -23,32 +23,35 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install yt-dlp
+          pip install yt-dlp requests
 
-      # (Optionnel) cookies pour vidéos restreintes
+      # Optionnel: si tu ajoutes un secret COOKIES_B64, on l'écrit en cookies.txt
       - name: Prepare cookies (optional)
-        if: ${{ secrets.COOKIES_B64 != '' }}
+        if: ${{ env.COOKIES_B64 != '' || secrets.COOKIES_B64 != '' }}
+        env:
+          COOKIES_B64: ${{ secrets.COOKIES_B64 }}
         run: |
-          echo "${{ secrets.COOKIES_B64 }}" | base64 -d > cookies.txt
+          echo "${COOKIES_B64}" | base64 -d > cookies.txt
 
       - name: Prepare output filename
         id: prep
-        run: |
-          url="${{ github.event.inputs.video_url }}"
-          slug=$(echo "$url" | sed 's/[^a-zA-Z0-9]/_/g')
-          ts=$(date +%s)
-          mkdir -p outputs
-          echo "FILENAME=outputs/video_info_${ts}_${slug}.json" >> $GITHUB_ENV
-          echo "filename=outputs/video_info_${ts}_${slug}.json" >> $GITHUB_OUTPUT
-
-      - name: Run extractor (yt-dlp + transcript)
         env:
-          YT_URL: ${{ github.event.inputs.video_url }}
+          VIDEO_URL: ${{ github.event.inputs.video_url }}
+        run: |
+          slug="$(echo "$VIDEO_URL" | sed 's/[^a-zA-Z0-9]/_/g')"
+          ts="$(date +%s)"
+          mkdir -p outputs
+          echo "FILENAME=outputs/output_${slug}_${ts}.json" >> $GITHUB_ENV
+          echo "filename=outputs/output_${slug}_${ts}.json" >> $GITHUB_OUTPUT
+
+      - name: Run extractor (with cookies if present)
+        env:
+          VIDEO_URL: ${{ github.event.inputs.video_url }}
         run: |
           if [ -f cookies.txt ]; then
-            python main.py "$YT_URL" "${{ env.FILENAME }}" --cookies cookies.txt
+            python main.py "$VIDEO_URL" "${FILENAME}"
           else
-            python main.py "$YT_URL" "${{ env.FILENAME }}"
+            python main.py "$VIDEO_URL" "${FILENAME}"
           fi
 
       - name: Commit result JSON
@@ -57,6 +60,6 @@ jobs:
         run: |
           git config user.name github-actions
           git config user.email github-actions@github.com
-          git add "${{ env.FILENAME }}"
-          git commit -m "Add video info: ${{ env.FILENAME }}" || echo "Nothing to commit"
-          git push https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git HEAD:main
+          git add "${FILENAME}"
+          git commit -m "Add video info: ${FILENAME}" || echo "No changes to commit"
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" HEAD:main
