@@ -1,86 +1,73 @@
-name: get-video-info
+name: Scrape YouTube Channel
 
 on:
   workflow_dispatch:
     inputs:
       video_url:
-        description: "YouTube Video URL"
+        description: "URL de la vidéo YouTube"
         required: true
-
-push:
-  branches:
-    - main
-        
-                
-permissions:
-  contents: write        
+        type: string
 
 jobs:
-  extract_info:
+  get-video-info:
     runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
 
-      - name: Setup Python
-        uses: actions/setup-python@v4
+    env:
+      COOKIES_PART_01: ${{ secrets.COOKIES_PART_01 }}
+      COOKIES_PART_02: ${{ secrets.COOKIES_PART_02 }}
+      COOKIES_PART_03: ${{ secrets.COOKIES_PART_03 }}
+      COOKIES_PART_04: ${{ secrets.COOKIES_PART_04 }}
+      COOKIES_PART_05: ${{ secrets.COOKIES_PART_05 }}
+      COOKIES_PART_06: ${{ secrets.COOKIES_PART_06 }}
+      COOKIES_PART_07: ${{ secrets.COOKIES_PART_07 }}
+      COOKIES_PART_08: ${{ secrets.COOKIES_PART_08 }}
+      COOKIES_PART_09: ${{ secrets.COOKIES_PART_09 }}
+      COOKIES_PART_10: ${{ secrets.COOKIES_PART_10 }}
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
+          python-version: "3.11"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
-        
-      - name: Install yt-dlp
-        run: pip install yt-dlp
-
-      - name: Run script
-        run: python main.py "${{ github.event.inputs.video_url }}"
-
-      # Étape 1 : Recréer le fichier .base64 à partir des secrets
-      - name: Recreate base64 file from secrets
         run: |
-          mkdir -p .private
-          echo "${{ secrets.COOKIES_PART_01 }}" > .private/cookie.txt.base64
-          echo "${{ secrets.COOKIES_PART_02 }}" >> .private/cookie.txt.base64
-          echo "${{ secrets.COOKIES_PART_03 }}" >> .private/cookie.txt.base64
-          echo "${{ secrets.COOKIES_PART_04 }}" >> .private/cookie.txt.base64
-          echo "${{ secrets.COOKIES_PART_05 }}" >> .private/cookie.txt.base64
-          echo "${{ secrets.COOKIES_PART_06 }}" >> .private/cookie.txt.base64
-          echo "${{ secrets.COOKIES_PART_07 }}" >> .private/cookie.txt.base64
-          echo "${{ secrets.COOKIES_PART_08 }}" >> .private/cookie.txt.base64
-          echo "${{ secrets.COOKIES_PART_09 }}" >> .private/cookie.txt.base64
-          echo "${{ secrets.COOKIES_PART_10 }}" >> .private/cookie.txt.base64
+          pip install -r requirements.txt || pip install yt-dlp
 
-      # Étape 2 : Décoder en cookies.txt
-      - name: Decode base64 into cookies.txt
-        run: |
-          base64 -d .private/cookie.txt.base64 > cookies.txt
-
-      # Étape 3 : Générer un nom de fichier structuré
       - name: Prepare output filename
         id: prep
         run: |
-          url="${{ github.event.inputs.video_url }}"
-          slug=$(echo "$url" | sed 's/[^a-zA-Z0-9]/_/g')
-          timestamp=$(date +"%Y%m%d_%H%M%S")
+          slug=$(echo "${{ github.event.inputs.video_url }}" | sed 's/[^a-zA-Z0-9]/_/g')
+          ts=$(date +%s)
           mkdir -p outputs
-          filename="outputs/video_info_${timestamp}_${slug}.json"
-          echo "filename=$filename" >> $GITHUB_ENV
-          echo "filename=$filename" >> "$GITHUB_OUTPUT"
+          echo "filename=outputs/output_${slug}_${ts}.json" >> "$GITHUB_OUTPUT"
 
-      # Étape 4 : Exécuter yt-dlp avec le fichier cookies.txt
-      - name: Run yt-dlp with cookies
+      - name: Debug outputs folder
         run: |
-          url="${{ github.event.inputs.video_url }}"
-          yt-dlp --no-playlist --cookies cookies.txt --dump-single-json "$url" > "${{ env.filename }}"
+          echo "Listing outputs folder:"
+          ls -la outputs || true
 
-      # Étape 5 : Commit du fichier JSON de sortie
+      - name: Run extractor
+        run: |
+          echo "Running main.py with video: ${{ github.event.inputs.video_url }}"
+          python main.py "${{ github.event.inputs.video_url }}" "outputs/${{ steps.prep.outputs.filename }}"
+
+      - name: Re-debug after generation
+        run: |
+          echo "Expecting file: ${{ steps.prep.outputs.filename }}"
+          ls -la outputs || true
+          test -f "${{ steps.prep.outputs.filename }}" && echo "✅ File exists" || echo "❌ File missing"
+
       - name: Commit result JSON
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
-          git config user.name "${{ github.actor }}"
-          git config user.email "${{ github.actor }}@users.noreply.github.com"
-          git add "${{ env.filename }}"
-          git commit -m "Add video info: ${{ env.filename }}" || echo "Nothing to commit"
-          # pousse sur la même branche que le workflow
-          git push origin HEAD:${{ github.ref_name }}
-
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add "${{ steps.prep.outputs.filename }}" || true
+          git commit -m "Add video info: ${{ steps.prep.outputs.filename }}" || echo "Nothing to commit"
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" HEAD:main || echo "Push skipped"
