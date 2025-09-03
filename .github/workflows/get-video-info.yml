@@ -6,7 +6,10 @@ on:
       video_url:
         description: 'YouTube Video URL'
         required: true
-
+        type: string
+        
+permissions:
+  contents: write
 
 jobs:
   get_info:
