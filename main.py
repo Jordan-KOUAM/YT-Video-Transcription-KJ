@@ -39,7 +39,7 @@ def main():
     cookies_file = os.environ.get("COOKIES_FILE", "").strip()
 
     if cookie:
-        cookies_file = ".cookies.txt"
+        cookies_file = "cookies.txt"
         with open(cookies_file, "w", encoding="utf-8") as f:
             f.write(cookie)
 
@@ -116,4 +116,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
