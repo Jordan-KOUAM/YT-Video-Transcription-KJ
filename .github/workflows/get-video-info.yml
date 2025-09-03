@@ -23,11 +23,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt || pip install yt-dlp
         
-      
-      - name: Run script
-        run: |
-          python3 main.py "${{ github.event.inputs.video_url }}" "output.json"
-
+    
 
       # Étape 1 : Recréer le fichier .base64 à partir des secrets
       - name: Recreate base64 file from secrets
@@ -48,6 +44,10 @@ jobs:
       - name: Decode base64 into cookies.txt
         run: |
           base64 -d .private/cookie.txt.base64 > cookies.txt
+
+      - name: Run script
+        run: |
+          python3 main.py "${{ github.event.inputs.video_url }}" "output.json"
 
       # Étape 3 : Générer un nom de fichier structuré
       - name: Prepare output filename
