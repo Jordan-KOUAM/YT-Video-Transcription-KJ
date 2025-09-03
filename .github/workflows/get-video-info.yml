@@ -1,18 +1,31 @@
-name: Get YouTube Video Info
+name: Scrape YouTube Channel
 
 on:
   workflow_dispatch:
     inputs:
       video_url:
-        description: "YouTube Video URL"
+        description: "URL de la vidéo YouTube"
         required: true
+        type: string
 
 jobs:
-  get_info:
+  get-video-info:
     runs-on: ubuntu-latest
 
+    env:
+      COOKIES_PART_01: ${{ secrets.COOKIES_PART_01 }}
+      COOKIES_PART_02: ${{ secrets.COOKIES_PART_02 }}
+      COOKIES_PART_03: ${{ secrets.COOKIES_PART_03 }}
+      COOKIES_PART_04: ${{ secrets.COOKIES_PART_04 }}
+      COOKIES_PART_05: ${{ secrets.COOKIES_PART_05 }}
+      COOKIES_PART_06: ${{ secrets.COOKIES_PART_06 }}
+      COOKIES_PART_07: ${{ secrets.COOKIES_PART_07 }}
+      COOKIES_PART_08: ${{ secrets.COOKIES_PART_08 }}
+      COOKIES_PART_09: ${{ secrets.COOKIES_PART_09 }}
+      COOKIES_PART_10: ${{ secrets.COOKIES_PART_10 }}
+
     steps:
-      - name: Checkout repository
+      - name: Checkout repo
         uses: actions/checkout@v4
 
       - name: Set up Python
@@ -22,58 +35,34 @@ jobs:
 
       - name: Install dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install yt-dlp
-
-      # (Optionnel) Recoller 10 secrets cookies en un seul fichier base64,
-      # puis les décoder dans cookies.txt si tu utilises des cookies.
-      - name: Recreate base64 cookie file from parts (optional)
-        if: ${{ secrets.COOKIES_PART_01 != '' }}
-        run: |
-          mkdir -p .private
-          for i in 01 02 03 04 05 06 07 08 09 10; do
-            part="COOKIES_PART_${i}"
-            val="${{ secrets[format('COOKIES_PART_{0}', i)] }}"
-            if [ -n "$val" ]; then echo "$val" >> .private/cookie.txt.base64; fi
-          done
-
-      - name: Decode cookies.txt (optional)
-        if: ${{ secrets.COOKIES_PART_01 != '' }}
-        run: |
-          base64 -d .private/cookie.txt.base64 > cookies.txt
-          echo "COOKIES_FILE=$GITHUB_WORKSPACE/cookies.txt" >> $GITHUB_ENV
+          pip install -r requirements.txt || pip install yt-dlp
 
       - name: Prepare output filename
         id: prep
         run: |
-          url="${{ github.event.inputs.video_url }}"
-          slug=$(echo "$url" | sed 's/[^a-zA-Z0-9]/_/g')
+          slug=$(echo "${{ github.event.inputs.video_url }}" | sed 's/[^a-zA-Z0-9]/_/g')
           ts=$(date +%s)
           mkdir -p outputs
           echo "filename=outputs/output_${slug}_${ts}.json" >> "$GITHUB_OUTPUT"
 
-      # Petit debug pour vérifier que le dossier existe bien
       - name: Debug outputs folder
         run: |
-          echo "Listing repository root:"
-          ls -la
-          echo "Listing outputs/:"
+          echo "Listing outputs folder:"
           ls -la outputs || true
 
-      - name: Run extractor (main.py)
-        env:
-          COOKIES_FILE: ${{ env.COOKIES_FILE }}
+      - name: Run extractor
         run: |
+          echo "Running main.py with video: ${{ github.event.inputs.video_url }}"
           python main.py "${{ github.event.inputs.video_url }}" "${{ steps.prep.outputs.filename }}"
 
-      # Re-debug après génération
-      - name: Check generated file
+      - name: Re-debug after generation
         run: |
           echo "Expecting file: ${{ steps.prep.outputs.filename }}"
-          test -f "${{ steps.prep.outputs.filename }}" && echo "OK: file exists" || (echo "ERROR: file not found" && exit 1)
-          head -n 40 "${{ steps.prep.outputs.filename }}"
+          ls -la outputs || true
+          test -f "${{ steps.prep.outputs.filename }}" && echo "✅ File exists" || echo "❌ File missing"
 
       - name: Commit result JSON
+        if: success()
         env:
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
@@ -81,4 +70,4 @@ jobs:
           git config user.email "github-actions@github.com"
           git add "${{ steps.prep.outputs.filename }}" || true
           git commit -m "Add video info: ${{ steps.prep.outputs.filename }}" || echo "Nothing to commit"
-          git push "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" HEAD:main
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" HEAD:main || echo "Push skipped"
