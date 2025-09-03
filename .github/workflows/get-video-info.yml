@@ -4,9 +4,11 @@ on:
   workflow_dispatch:
     inputs:
       video_url:
-        description: 'YouTube Video URL'
+        description: "YouTube Video URL"
         required: true
-        type: string
+  push:
+    branches:
+      - main
         
 permissions:
   contents: write
