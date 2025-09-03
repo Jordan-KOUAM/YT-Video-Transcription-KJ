@@ -90,6 +90,8 @@ def main():
         ydl_opts["cookiefile"] = cookies_file
     else:
         print("⚠️ Aucun cookies détecté ! Risque d’erreur 403.")
+    
+    print("🐾 Cookie reconstitué (début):", cookie[:100])
 
     
     vtt_raw = ""
@@ -124,6 +126,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
