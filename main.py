@@ -84,6 +84,14 @@ def main():
         "tags": info.get("tags"),
     }
 
+
+    if have_cookies:
+        print(f"✅ Cookies détectés dans : {cookies_file}")
+        ydl_opts["cookiefile"] = cookies_file
+    else:
+        print("⚠️ Aucun cookies détecté ! Risque d’erreur 403.")
+
+    
     vtt_raw = ""
     chosen_path = ""
     candidates_order = []
@@ -116,5 +124,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
