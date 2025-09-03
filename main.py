@@ -5,8 +5,6 @@ import re
 from yt_dlp import YoutubeDL
 
 def clean_vtt(vtt_text: str) -> str:
-    # retire les horodatages + numéros + balises, garde seulement le texte
-    # supprime les lignes avec --> (timestamps) et les numéros de séquence
     lines = []
     for line in vtt_text.splitlines():
         if '-->' in line:
@@ -15,9 +13,7 @@ def clean_vtt(vtt_text: str) -> str:
             continue
         lines.append(line)
     text = '\n'.join(lines)
-    # enlever balises style <c> ou <i>
     text = re.sub(r'<[^>]+>', '', text)
-    # compacter espaces
     text = re.sub(r'\s+\n', '\n', text)
     text = re.sub(r'\n{2,}', '\n\n', text)
     return text.strip()
@@ -36,10 +32,20 @@ def main():
 
     url = sys.argv[1]
     out_json = sys.argv[2]
+
+    # 🔐 Reconstruction des cookies depuis les secrets GH (s'ils existent)
+    cookie_parts = [os.getenv(f"COOKIES_PART_{i}") for i in range(1, 11)]
+    cookie = ''.join([p for p in cookie_parts if p])
     cookies_file = os.environ.get("COOKIES_FILE", "").strip()
+    
+    # Si cookie a été reconstruit, on l’enregistre temporairement
+    if cookie:
+        cookies_file = ".cookies.txt"
+        with open(cookies_file, "w", encoding="utf-8") as f:
+            f.write(cookie)
+
     have_cookies = cookies_file and os.path.exists(cookies_file)
 
-    # Dossier temporaire pour sous-titres
     tmp_dir = ".tmp_subs"
     os.makedirs(tmp_dir, exist_ok=True)
 
@@ -47,13 +53,10 @@ def main():
         "skip_download": True,
         "quiet": True,
         "no_warnings": True,
-        # récupère sous-titres auto si dispos, en VTT
         "writesubtitles": True,
         "writeautomaticsub": True,
         "subtitlesformat": "vtt",
-        # priorité FR puis EN, sinon tout ce qui existe
         "subtitleslangs": ["fr", "fr.*", "en", "en.*", "live_chat"],
-        # sauver les sous-titres dans tmp_dir
         "outtmpl": os.path.join(tmp_dir, "%(id)s.%(ext)s"),
     }
 
@@ -61,9 +64,8 @@ def main():
         ydl_opts["cookiefile"] = cookies_file
 
     with YoutubeDL(ydl_opts) as ydl:
-        info = ydl.extract_info(url, download=True)  # download=True pour que les .vtt soient écrits
+        info = ydl.extract_info(url, download=True)
 
-    # métadonnées utiles
     data = {
         "video_url": info.get("webpage_url") or url,
         "id": info.get("id"),
@@ -81,16 +83,15 @@ def main():
         "tags": info.get("tags"),
     }
 
-    # Essayer de trouver un fichier .vtt dans tmp_dir (FR en priorité, puis EN, puis n'importe)
     vtt_raw = ""
     chosen_path = ""
     candidates_order = []
 
     vid = data["id"] or "video"
-    # candidats typiques écrits par yt-dlp
+
     for lang in ["fr", "fr-FR", "fr-.*", "en", "en-US", "en-.*"]:
         candidates_order.append(os.path.join(tmp_dir, f"{vid}.{lang}.vtt"))
-    # fallback: n’importe quel .vtt pour cette vidéo
+
     for fname in os.listdir(tmp_dir):
         if fname.startswith(vid) and fname.endswith(".vtt"):
             candidates_order.append(os.path.join(tmp_dir, fname))
@@ -103,11 +104,9 @@ def main():
     if chosen_path:
         vtt_raw = read_text_file(chosen_path)
 
-    # Deux colonnes: brut (VTT) + nettoyé
     data["transcript_raw_srt"] = vtt_raw or None
     data["transcript_clean_text"] = clean_vtt(vtt_raw) if vtt_raw else None
 
-    # Sauver
     os.makedirs(os.path.dirname(out_json), exist_ok=True)
     with open(out_json, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
