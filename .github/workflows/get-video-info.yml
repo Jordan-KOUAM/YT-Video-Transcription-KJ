@@ -21,10 +21,8 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: pip install -r requirements.txt || pip install yt-dlp
         
-      - name: Install yt-dlp
-        run: pip install yt-dlp
 
       - name: Run script
         run: python main.py "${{ github.event.inputs.video_url }}"
