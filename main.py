@@ -57,6 +57,8 @@ def main():
         "subtitlesformat": "vtt",
         "subtitleslangs": ["fr", "fr.*", "en", "en.*", "live_chat"],
         "outtmpl": os.path.join(tmp_dir, "%(id)s.%(ext)s"),
+        'cookiefile': 'cookies.txt',  # 👈 Indique à yt_dlp d’utiliser le fichier reconstitué
+
     }
 
     if have_cookies:
@@ -114,3 +116,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
