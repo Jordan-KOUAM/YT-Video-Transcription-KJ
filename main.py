@@ -30,15 +30,14 @@ def main():
         print("Usage: python main.py <youtube_url> <output_json_path>")
         sys.exit(1)
 
-    url = sys.argv[1]
-    out_json = sys.argv[2]
+    url = sys.argv[1].strip()
+    out_json = sys.argv[2].strip()
 
-    # 🔐 Reconstruction des cookies depuis les secrets GH (s'ils existent)
+    # 🔐 Reconstruction des cookies depuis les secrets GitHub (s'ils existent)
     cookie_parts = [os.getenv(f"COOKIES_PART_{i}") for i in range(1, 11)]
     cookie = ''.join([p for p in cookie_parts if p])
     cookies_file = os.environ.get("COOKIES_FILE", "").strip()
-    
-    # Si cookie a été reconstruit, on l’enregistre temporairement
+
     if cookie:
         cookies_file = ".cookies.txt"
         with open(cookies_file, "w", encoding="utf-8") as f:
