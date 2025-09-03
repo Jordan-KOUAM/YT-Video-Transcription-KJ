@@ -53,7 +53,7 @@ jobs:
       - name: Run extractor
         run: |
           echo "Running main.py with video: ${{ github.event.inputs.video_url }}"
-          python main.py "${{ github.event.inputs.video_url }}" "${{ steps.prep.outputs.filename }}"
+          python main.py "${{ github.event.inputs.video_url }}" "outputs/${{ steps.prep.outputs.filename }}"
 
       - name: Re-debug after generation
         run: |
