@@ -39,14 +39,6 @@ jobs:
           echo "${{ secrets.COOKIES_PART_08 }}" >> .private/cookie.txt.base64
           echo "${{ secrets.COOKIES_PART_09 }}" >> .private/cookie.txt.base64
           echo "${{ secrets.COOKIES_PART_10 }}" >> .private/cookie.txt.base64
-          echo "${{ secrets.COOKIES_PART_11 }}" >> .private/cookie.txt.base64
-          echo "${{ secrets.COOKIES_PART_12 }}" >> .private/cookie.txt.base64
-          echo "${{ secrets.COOKIES_PART_13 }}" >> .private/cookie.txt.base64
-          echo "${{ secrets.COOKIES_PART_14 }}" >> .private/cookie.txt.base64
-          echo "${{ secrets.COOKIES_PART_15 }}" >> .private/cookie.txt.base64
-          echo "${{ secrets.COOKIES_PART_16 }}" >> .private/cookie.txt.base64
-          echo "${{ secrets.COOKIES_PART_17 }}" >> .private/cookie.txt.base64
-          echo "${{ secrets.COOKIES_PART_18 }}" >> .private/cookie.txt.base64
 
       # Étape 2 : Décoder en cookies.txt
       - name: Decode base64 into cookies.txt
