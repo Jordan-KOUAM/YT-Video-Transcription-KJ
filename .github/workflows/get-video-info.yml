@@ -29,13 +29,12 @@ jobs:
 
       - name: Install dependencies
         run: pip install -r requirements.txt
+        
+      - name: Install yt-dlp
+        run: pip install yt-dlp
 
       - name: Run script
         run: python main.py "${{ github.event.inputs.video_url }}"
-
-
-      - name: Install yt-dlp
-        run: pip install yt-dlp
 
       # Étape 1 : Recréer le fichier .base64 à partir des secrets
       - name: Recreate base64 file from secrets
