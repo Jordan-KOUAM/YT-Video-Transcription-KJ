@@ -7,18 +7,24 @@ on:
         description: 'YouTube Video URL'
         required: true
 
+permissions:
+  contents: write
+
 jobs:
   get_info:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+         with:
+           persist-credentials: true
+           fetch-depth: 0
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.11'
 
       - name: Install yt-dlp
         run: pip install yt-dlp
@@ -63,11 +69,11 @@ jobs:
 
       # Étape 5 : Commit du fichier JSON de sortie
       - name: Commit result JSON
-        env:
-          GH_TOKEN: ${{ secrets.GH_TOKEN }}
         run: |
-          git config user.name github-actions
-          git config user.email github-actions@github.com
+          git config user.name "${{ github.actor }}"
+          git config user.email "${{ github.actor }}@users.noreply.github.com"
           git add "${{ env.filename }}"
-          git commit -m "Add video info: ${{ env.filename }}"
-          git push https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git HEAD:main
+          git commit -m "Add video info: ${{ env.filename }}" || echo "Nothing to commit"
+          # pousse sur la même branche que le workflow
+          git push origin HEAD:${{ github.ref_name }}
+
